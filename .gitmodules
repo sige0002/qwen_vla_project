@@ -1,0 +1,4 @@
+[submodule "lerobot"]
+	path = lerobot
+	url = https://github.com/sige0002/lerobot.git
+	branch = develop

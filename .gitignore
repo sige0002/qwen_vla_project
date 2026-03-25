@@ -17,3 +17,11 @@ __pycache__/
 
 # uv
 uv.lock
+
+# Model weights
+hf_qwen/*
+!hf_qwen/.gitkeep
+
+# Dataset
+robocoin/*
+!robocoin/.gitkeep
