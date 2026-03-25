@@ -1,5 +1,6 @@
 """Simple chat script for Qwen3.5-4B-Base."""
 
+import argparse
 import re
 
 from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -13,6 +14,12 @@ def strip_thinking(text: str) -> str:
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Chat with Qwen3.5-4B-Base")
+    parser.add_argument(
+        "--no-think", action="store_true", help="Disable thinking mode"
+    )
+    args = parser.parse_args()
+
     print("Loading model...")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
     model = AutoModelForCausalLM.from_pretrained(
@@ -36,7 +43,10 @@ def main():
         messages.append({"role": "user", "content": user_input})
 
         text = tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=not args.no_think,
         )
         inputs = tokenizer(text, return_tensors="pt").to(model.device)
 

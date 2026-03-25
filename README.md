@@ -54,7 +54,11 @@ huggingface-cli download Qwen/Qwen3.5-4B-Base --local-dir hf_qwen
 ### チャットスクリプト
 
 ```bash
+# 通常モード（thinking あり）
 uv run python chat.py
+
+# thinking を無効にする
+uv run python chat.py --no-think
 ```
 
 対話形式で Qwen3.5-4B と会話できます。`quit` または `exit` で終了します。
