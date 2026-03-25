@@ -1,0 +1,19 @@
+# PDF files
+*.pdf
+
+# Python virtual environment
+.venv/
+bin/
+lib/
+lib64
+pyvenv.cfg
+CACHEDIR.TAG
+.lock
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# uv
+uv.lock
