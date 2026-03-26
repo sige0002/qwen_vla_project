@@ -3,6 +3,7 @@
 
 # Python virtual environment
 .venv/
+.lerobot_venv/
 bin/
 lib/
 lib64
@@ -21,6 +22,9 @@ uv.lock
 # Model weights
 hf_qwen/*
 !hf_qwen/.gitkeep
+
+# Training outputs
+outputs/
 
 # Dataset
 robocoin/*

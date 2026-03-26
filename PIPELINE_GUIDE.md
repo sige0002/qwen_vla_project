@@ -373,11 +373,13 @@ ValueError: 'policy.repo_id' argument missing.
 error: Cannot update time stamp of directory 'src/lerobot.egg-info'
 ```
 
-→ 別ユーザー（root 等）で `uv pip install` した際に `lerobot/src/lerobot.egg-info/` が
-そのユーザー所有で作られている。`sudo` で削除して再実行:
+→ 別ユーザー（root 等）で `uv pip install` した際に `.lerobot_venv/` や
+`lerobot/src/lerobot.egg-info/` がそのユーザー所有で作られている。
+venv ごと削除して作り直す:
 
 ```bash
-sudo rm -rf lerobot/src/lerobot.egg-info
+sudo rm -rf .lerobot_venv lerobot/src/lerobot.egg-info
+uv venv .lerobot_venv --python 3.12
 uv pip install -e lerobot/ --python .lerobot_venv/bin/python
 ```
 
