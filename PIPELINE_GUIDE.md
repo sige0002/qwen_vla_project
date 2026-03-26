@@ -391,6 +391,20 @@ ValueError: 'policy.repo_id' argument missing.
 
 → `--policy.push_to_hub=false` を指定。
 
+### コンテナ内で作成したファイルがホストから操作できない
+
+```
+Permission denied
+```
+
+→ コンテナ内で root として作成されたファイルは、ホスト側のユーザーから操作できない。
+コンテナ内で全ファイルの所有者を統一する:
+
+```bash
+# コンテナ内で実行
+sudo chown -R $(whoami):$(whoami) /workspace/qwen_vla_project/
+```
+
 ### インストール時の Permission denied エラー
 
 以下のいずれかのエラーが出る場合:
