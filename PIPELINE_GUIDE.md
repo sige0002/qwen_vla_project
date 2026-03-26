@@ -119,6 +119,20 @@ Converting episodes metadata ...
 - 変換済みデータが元のパスに置かれる
 - `meta/info.json` の `codebase_version` が `"v3.0"` に更新
 
+### 変換後の parquet 修正（shape=[1] リスト型の修正）
+
+変換後、RoboCOIN 固有フィールドのうち `scene_annotation` (shape=[1]) が parquet 上で
+`list<int32>` として格納されており、LeRobot の読み込みで `int32` へのキャスト失敗エラーが出る。
+`fix_parquet_list_scalars.py` で修正する:
+
+```bash
+.lerobot_venv/bin/python fix_parquet_list_scalars.py \
+    --root=robocoin/RoboCOIN/Realman_RMC_AIDA_L_storage_block_basket_old
+```
+
+このスクリプトは info.json の shape=[1] フィールドのうち parquet で list 型のものだけを
+スカラーに変換する。拡張フィールドは削除しない。
+
 ### Hub 上のデータセットを変換する場合
 
 ```bash
@@ -135,8 +149,9 @@ RoboCOIN v2.1 データセットには標準 LeRobot にない拡張フィール
 - `eef_sim_pose_state/action`, `eef_direction_*`, `eef_velocity_*`, `eef_acc_mag_*`
 - `gripper_open_scale_*`, `gripper_mode_*`, `gripper_activity_*`
 
-これらのフィールドはパーケットのスキーマ不整合（`list<int32>` vs `int32`）を引き起こす場合がある。
-既に v3.0 で提供されているデータセットを使うか、変換後にスキーマを修正する必要がある。
+変換スクリプト自体はこれらのフィールドを保持するが、`scene_annotation` (shape=[1]) が
+parquet 上で `list<int32>` のまま残り、LeRobot の読み込み時にスキーマ不整合が起きる。
+変換後に `fix_parquet_list_scalars.py` を実行して修正する（上記参照）。
 
 ### action feature（28次元）の構成
 
@@ -441,15 +456,19 @@ AttributeError: module 'torchvision.io' has no attribute 'VideoReader'
 → lerobot が正しくインストールされていない。`uv pip install -e lerobot/` を再実行。
 それでも解決しない場合は `train_realman.py` (monkey-patch ラッパー) を使用。
 
-### v2.1 変換時のスキーマエラー
+### v2.1 変換後のスキーマエラー
 
 ```
 TypeError: Couldn't cast array of type list<int32> to int32
 ```
 
-→ RoboCOIN 固有の拡張フィールド（`subtask_annotation` 等）のスキーマ不整合。
-既に v3.0 で提供されているデータセットを使うか、変換後に info.json の features から
-RoboCOIN 固有フィールドを除去する。
+→ RoboCOIN 固有フィールドのうち shape=[1] のもの（`scene_annotation`）が parquet で
+`list<int32>` のまま残り、LeRobot が `Value(int32)` として読もうとして失敗する。
+変換後に `fix_parquet_list_scalars.py` を実行する:
+
+```bash
+.lerobot_venv/bin/python fix_parquet_list_scalars.py --root=<dataset_root>
+```
 
 ---
 

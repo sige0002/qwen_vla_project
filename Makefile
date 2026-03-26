@@ -80,11 +80,12 @@ train-diffusion: ## Train with Diffusion policy (100k steps)
 
 # === Dataset targets ===
 
-convert-v21-to-v30: ## Convert old v2.1 dataset to v3.0
+convert-v21-to-v30: ## Convert old v2.1 dataset to v3.0 (with parquet fix)
 	$(PYTHON) lerobot/src/lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
 		--repo-id=$(DATASET_OLD_REPO) \
 		--root=$(DATASET_OLD_ROOT) \
 		--push-to-hub=false
+	$(PYTHON) fix_parquet_list_scalars.py --root=$(DATASET_OLD_ROOT)
 
 check-dataset-version: ## Check dataset codebase version
 	@cat $(DATASET_ROOT)/meta/info.json | python3 -m json.tool | grep codebase_version
