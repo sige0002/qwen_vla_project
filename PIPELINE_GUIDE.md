@@ -208,6 +208,16 @@ elif config.type == "bi_realman_follower":
 
 以下は全て 2026-03-26 に実際に実行して検証したコマンドと結果です。
 
+**注意: 2種類のデータセットについて**
+
+| データセット | パス | バージョン | features 数 | 拡張フィールド |
+|---|---|---|---|---|
+| 既存 v3.0 | `Realman_RMC_AIDA_L_storage_block_basket/` | v3.0 | 10 | なし |
+| old (v2.1→v3.0変換) | `Realman_RMC_AIDA_L_storage_block_basket_old/` | v2.1 | 26 | あり（16列） |
+
+既存 v3.0 データは拡張フィールドが最初から含まれていない。
+old データを変換すると拡張フィールドを保持した v3.0 データが得られる。
+
 ### 3.1 環境情報の確認
 
 ```bash
@@ -219,14 +229,11 @@ elif config.type == "bi_realman_follower":
 - Platform: Linux-6.14.0-1015-nvidia-aarch64-with-glibc2.39
 - Python version: 3.12.3
 - PyTorch version: 2.10.0
-- lerobot scripts: ['lerobot-calibrate', 'lerobot-dataset-viz', 'lerobot-edit-dataset',
-  'lerobot-eval', 'lerobot-find-cameras', 'lerobot-find-joint-limits', 'lerobot-find-port',
-  'lerobot-imgtransform-viz', 'lerobot-info', 'lerobot-record', 'lerobot-replay',
-  'lerobot-setup-can', 'lerobot-setup-motors', 'lerobot-teleoperate', 'lerobot-train',
-  'lerobot-train-tokenizer']
 ```
 
-### 3.2 データセットの features 確認
+### 3.2 データセットの features 確認（既存 v3.0、拡張フィールドなし）
+
+**使用データ: `Realman_RMC_AIDA_L_storage_block_basket/` (既存 v3.0、10 features)**
 
 ```bash
 .lerobot_venv/bin/python -c "
@@ -236,8 +243,6 @@ ds = LeRobotDataset(
     root='robocoin/RoboCOIN/Realman_RMC_AIDA_L_storage_block_basket'
 )
 print(f'Frames: {len(ds)}')
-print(f'Episodes: {ds.meta.info[\"total_episodes\"]}')
-print(f'FPS: {ds.meta.info[\"fps\"]}')
 for k, v in ds.meta.info['features'].items():
     print(f'  {k}: dtype={v[\"dtype\"]}, shape={v[\"shape\"]}')
 "
@@ -245,8 +250,6 @@ for k, v in ds.meta.info['features'].items():
 
 ```
 Frames: 19083
-Episodes: 50
-FPS: 30
   observation.images.cam_head_rgb: dtype=video, shape=[480, 640, 3]
   observation.images.cam_left_wrist_rgb: dtype=video, shape=[480, 640, 3]
   observation.images.cam_right_wrist_rgb: dtype=video, shape=[480, 640, 3]
@@ -259,27 +262,11 @@ FPS: 30
   task_index: dtype=int64, shape=[1]
 ```
 
-### 3.3 v2.1 → v3.0 データセット変換
+> このデータには RoboCOIN 拡張フィールド（subtask_annotation, eef_* 等）は含まれていない。
 
-```bash
-# old (v2.1) データを v3.0 に変換
-.lerobot_venv/bin/python lerobot/src/lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
-    --repo-id=robocoin/Realman_RMC_AIDA_L_storage_block_basket_old \
-    --root=robocoin/RoboCOIN/Realman_RMC_AIDA_L_storage_block_basket_old \
-    --push-to-hub=false
-```
+### 3.3 学習 smoke test（既存 v3.0、拡張フィールドなし）
 
-```
-Converting info ...
-Converting tasks ...
-Converting data files from 50 episodes
-convert data files: 100%|██████████| 50/50
-Converting videos ...
-convert videos: 100%|██████████| 50/50
-Converting episodes metadata ...
-```
-
-### 3.4 学習（ACT ポリシー、smoke test: 2ステップ）
+**使用データ: `Realman_RMC_AIDA_L_storage_block_basket/` (既存 v3.0、10 features)**
 
 ```bash
 .lerobot_venv/bin/lerobot-train \
@@ -294,16 +281,101 @@ Converting episodes metadata ...
 ```
 
 ```
-Using video codec: libsvtav1
-Creating policy
 num_learnable_params=51642268 (52M)
 Training: 100%|██████████| 2/2 [00:08<00:00, 4.19s/step]
 End of training
 ```
 
-### 3.5 学習（ACT ポリシー、本番: 100000ステップ）
+> **結果: 成功。** ただしこのデータには拡張フィールドがないため、
+> 拡張フィールドの互換性は検証できていない。
+
+### 3.4 v2.1 → v3.0 データセット変換（拡張フィールド保持）
+
+**使用データ: `Realman_RMC_AIDA_L_storage_block_basket_old/` (v2.1、26 features)**
 
 ```bash
+# Step 1: v2.1 → v3.0 変換（拡張フィールドは保持される）
+.lerobot_venv/bin/python lerobot/src/lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
+    --repo-id=robocoin/Realman_RMC_AIDA_L_storage_block_basket_old \
+    --root=robocoin/RoboCOIN/Realman_RMC_AIDA_L_storage_block_basket_old \
+    --push-to-hub=false
+
+# Step 2: shape=[1] リスト型をスカラーに修正
+# （scene_annotation が list<int32> のまま残り LeRobot 読み込みでエラーになるため）
+.lerobot_venv/bin/python fix_parquet_list_scalars.py \
+    --root=robocoin/RoboCOIN/Realman_RMC_AIDA_L_storage_block_basket_old
+
+# または Makefile で一発:
+# make convert-v21-to-v30
+```
+
+```
+# Step 1 出力:
+Converting data files from 50 episodes
+convert data files: 100%|██████████| 50/50
+convert videos: 100%|██████████| 50/50
+Converting episodes metadata ...
+
+# Step 2 出力:
+shape=[1] features to check: ['timestamp', 'frame_index', 'episode_index', 'index', 'task_index', 'scene_annotation']
+  Fixed: scene_annotation (list<int32> -> int32)
+Done. Fixed 1/1 file(s).
+```
+
+> **変換後の info.json には 26 features が保持される（拡張フィールド 16 列含む）。**
+> **parquet にも 23 カラム全て保持される。**
+>
+> Step 2 を省略すると以下のエラーが出る:
+> `TypeError: Couldn't cast array of type list<int32> to int32`
+
+### 3.5 学習 smoke test（変換後 v3.0、拡張フィールドあり）
+
+**使用データ: v2.1 から変換した v3.0 データ（26 features、fix 適用済み）**
+
+```bash
+.lerobot_venv/bin/lerobot-train \
+    --dataset.repo_id=robocoin/Realman_RMC_AIDA_L_storage_block_basket_old \
+    --dataset.root=robocoin/RoboCOIN/Realman_RMC_AIDA_L_storage_block_basket_old \
+    --policy.type=act \
+    --policy.push_to_hub=false \
+    --num_workers=0 \
+    --batch_size=2 \
+    --steps=2 \
+    --output_dir=outputs/test_smoke_with_ext
+```
+
+```
+num_learnable_params=51642268 (52M)
+Training: 100%|██████████| 2/2 [00:08<00:00, 4.12s/step]
+End of training
+```
+
+> **結果: 成功。** 拡張フィールド付きデータでも学習が動作することを確認。
+
+### 3.6 可視化
+
+**使用データ: `Realman_RMC_AIDA_L_storage_block_basket/` (既存 v3.0)**
+
+```bash
+.lerobot_venv/bin/lerobot-dataset-viz \
+    --repo-id=robocoin/Realman_RMC_AIDA_L_storage_block_basket \
+    --root=robocoin/RoboCOIN/Realman_RMC_AIDA_L_storage_block_basket \
+    --episode-index=0 \
+    --num-workers=0 \
+    --save=1 \
+    --output-dir=outputs/viz_v30
+```
+
+```
+100%|██████████| 10/10 [00:08<00:00, 1.13it/s]
+```
+
+→ `outputs/viz_v30/*.rrd` が出力される。Rerun Viewer で開いて確認可能。
+
+### 3.7 本番学習コマンド例
+
+```bash
+# ACT ポリシー
 .lerobot_venv/bin/lerobot-train \
     --dataset.repo_id=robocoin/Realman_RMC_AIDA_L_storage_block_basket \
     --dataset.root=robocoin/RoboCOIN/Realman_RMC_AIDA_L_storage_block_basket \
@@ -313,14 +385,8 @@ End of training
     --batch_size=8 \
     --steps=100000 \
     --output_dir=outputs/act_realman
-```
 
-> `--num_workers`: コンテナ環境で SHM 不足エラーが出る場合は `0` に設定。
-> `--batch_size`: GPU メモリに応じて調整（128GB GPU なら 64 以上も可能）。
-
-### 3.6 学習（Diffusion ポリシー）
-
-```bash
+# Diffusion ポリシー
 .lerobot_venv/bin/lerobot-train \
     --dataset.repo_id=robocoin/Realman_RMC_AIDA_L_storage_block_basket \
     --dataset.root=robocoin/RoboCOIN/Realman_RMC_AIDA_L_storage_block_basket \
@@ -331,6 +397,9 @@ End of training
     --steps=100000 \
     --output_dir=outputs/diffusion_realman
 ```
+
+> `--num_workers`: コンテナ環境で SHM 不足エラーが出る場合は `0` に設定。
+> `--batch_size`: GPU メモリに応じて調整（128GB GPU なら 64 以上も可能）。
 
 ---
 
