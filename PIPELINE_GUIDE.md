@@ -1,6 +1,6 @@
 # RoboCOIN データセット → LeRobot 学習 パイプラインガイド
 
-本ドキュメントは、RoboCOINデータセットを用いたLeRobotの学習パイプライン（データ変換・Config実装・学習実行・トラブルシューティング）をまとめたものです。
+本ドキュメントは、RoboCOINデータセットを用いたLeRobotの学習パイプライン（データ変換・Config実装・学習実行・検証・トラブルシューティング）をまとめたものです。
 
 ---
 
@@ -46,7 +46,10 @@ RoboCOINデータセット（例: `Realman_RMC_AIDA_L_storage_block_basket`）�
 
 確認方法:
 ```bash
-cat /path/to/dataset/meta/info.json | python3 -m json.tool | grep codebase_version
+make check-dataset-version
+# または手動で:
+cat robocoin/RoboCOIN/Realman_RMC_AIDA_L_storage_block_basket/meta/info.json \
+    | python3 -m json.tool | grep codebase_version
 # "codebase_version": "v3.0" であれば変換済み
 ```
 
@@ -56,14 +59,14 @@ RoboCOINデータセットの `action` は28次元で構成されている:
 
 | 次元 | フィールド名 | 説明 |
 |---|---|---|
-| 0–6 | `right_arm_joint_1_rad` 〜 `right_arm_joint_7_rad` | 右腕関節角度（ラジアン） |
+| 0--6 | `right_arm_joint_1_rad` 〜 `right_arm_joint_7_rad` | 右腕関節角度（ラジアン） |
 | 7 | `right_gripper_open` | 右グリッパー開閉 |
-| 8–13 | `right_eef_pos_{x,y,z}_m`, `right_eef_rot_euler_{x,y,z}_rad` | 右手先位置・姿勢 |
-| 14–20 | `left_arm_joint_1_rad` 〜 `left_arm_joint_7_rad` | 左腕関節角度（ラジアン） |
+| 8--13 | `right_eef_pos_{x,y,z}_m`, `right_eef_rot_euler_{x,y,z}_rad` | 右手先位置・姿勢 |
+| 14--20 | `left_arm_joint_1_rad` 〜 `left_arm_joint_7_rad` | 左腕関節角度（ラジアン） |
 | 21 | `left_gripper_open` | 左グリッパー開閉 |
-| 22–27 | `left_eef_pos_{x,y,z}_m`, `left_eef_rot_euler_{x,y,z}_rad` | 左手先位置・姿勢 |
+| 22--27 | `left_eef_pos_{x,y,z}_m`, `left_eef_rot_euler_{x,y,z}_rad` | 左手先位置・姿勢 |
 
-カメラは3台（`cam_head_rgb`, `cam_left_wrist_rgb`, `cam_right_wrist_rgb`）、解像度は 480×640、コーデックは AV1。
+カメラは3台（`cam_head_rgb`, `cam_left_wrist_rgb`, `cam_right_wrist_rgb`）、解像度は 480x640、コーデックは AV1。
 
 ---
 
@@ -92,7 +95,7 @@ lerobot/src/lerobot/robots/
 | `id` | `"default"` | ロボット識別子 |
 | `ip` | `"169.254.128.18"` | Realman コントローラ IP |
 | `port` | `8080` | Realman コントローラ ポート |
-| `velocity` | `30` | 関節移動速度（0–100） |
+| `velocity` | `30` | 関節移動速度（0--100） |
 | `block` | `False` | SDKコマンドのブロッキングモード |
 | `wait_second` | `0.1` | 非ブロッキング時の待機秒数 |
 | `joint_names` | `["joint_1", ..., "joint_7", "gripper"]` | 関節名リスト（8次元） |
@@ -135,116 +138,285 @@ elif config.type == "bi_realman_follower":
 
 ## 3. 学習パイプライン
 
-### train_realman.py の構成（monkey-patchの説明）
+### なぜ lerobot_train 直接実行ではなく train_realman.py ラッパーが必要か
 
-`/workspace/qwen_vla_project/train_realman.py` は、`torchcodec` / `torchvision.io.VideoReader` が利用できない環境（aarch64, GPU非搭載など）向けに、LeRobotの動画デコード関数を起動時にすり替え（monkey-patch）するラッパースクリプトです。
+LeRobotは `DatasetConfig.video_backend` で `pyav` を指定可能だが、**内部実装に問題がある**：
 
-**起動フロー:**
+```
+video_backend="pyav"
+  → decode_video_frames() が呼ばれる
+    → decode_video_frames_torchvision(backend="pyav") にルーティング
+      → torchvision.set_video_backend("pyav") を設定
+        → torchvision.io.VideoReader を呼び出す  ← ここでクラッシュ
+```
+
+つまり LeRobot の `pyav` バックエンドは「PyAVライブラリを直接使う」のではなく「torchvision の pyav バックエンドを使う」という意味であり、`torchvision.io.VideoReader` が必要。VideoReader 未搭載環境（aarch64、特定のGPU非搭載ビルド等）では以下のエラーが出る：
+
+```
+AttributeError: module 'torchvision.io' has no attribute 'VideoReader'
+```
+
+**検証結果（2026-03-26実施）：**
+
+| テスト | コマンド | 結果 |
+|--------|---------|------|
+| lerobot_train 直接実行 | `PYTHONPATH=lerobot/src python -m lerobot.scripts.lerobot_train --dataset.video_backend=pyav ...` | **FAIL** (`VideoReader` 未搭載) |
+| train_realman.py 経由 | `python train_realman.py ...` | **PASS** (2ステップ完走) |
+
+したがって `train_realman.py` の monkey-patch（PyAV を直接使う `decode_video_frames_av` で置き換え）は、この環境では**唯一の有効な手段**である。
+
+### train_realman.py の構成
 
 ```
 train_realman.py
 ├── 1. sys.path に lerobot/src を追加
 ├── 2. lerobot.datasets.video_utils をインポート
-├── 3. decode_video_frames_av() を定義（PyAV使用）
+├── 3. decode_video_frames_av() を定義（PyAV を直接使用）
 ├── 4. video_utils.decode_video_frames = decode_video_frames_av  ← monkey-patch
 └── 5. lerobot.scripts.lerobot_train.train() を呼び出し
 ```
 
 **decode_video_frames_av の動作:**
-- `av.open()` でMP4を開き、シーク + フレームデコード
-- リクエストされたタイムスタンプに最も近いフレームを返す
+- `av.open()` で動画ファイルを開く
+- 最初のリクエストタイムスタンプの1秒前にシーク
+- フレームをデコードして `torch.Tensor (N, C, H, W)` で返す（float32, [0, 1]）
 - 許容誤差 `tolerance_s` を超えた場合は `FrameTimestampError` を送出
 
-### 実行コマンド例（ACTポリシー）
+**注意: `robot.type` について**
+- `TrainPipelineConfig` に `robot` フィールドは**存在しない**
+- 学習にはデータセットの features 情報のみが使われ、robot config は不要
+- robot config はデプロイ（推論→実機送信）時に必要になる
+
+### Makefile によるコマンド管理
+
+デフォルトオプション（`--policy.push_to_hub=false`, `--num_workers=0` 等）は Makefile の `COMMON_ARGS` で一元管理する。
 
 ```bash
 cd /workspace/qwen_vla_project
 
-# uvの仮想環境を使用
-python train_realman.py \
-    --policy.type=act \
-    --dataset.repo_id=local/robocoin \
-    --dataset.root=robocoin/RoboCOIN/Realman_RMC_AIDA_L_storage_block_basket \
-    --policy.push_to_hub=false \
-    --num_workers=0 \
-    --output_dir=outputs/act_realman
+# 利用可能なコマンド一覧を表示
+make help
 ```
 
-ハブにデータセットがある場合:
+| Makeターゲット | 説明 | 用途 |
+|---------------|------|------|
+| `make test-import` | realman/bi_realman の import テスト | Config/Robot クラスが正しく読み込めるか確認 |
+| `make test-dataset` | データセットの読み込みテスト | LeRobotDataset でフレーム数・features を確認 |
+| `make test-train` | 2ステップの smoke test（ACT） | 学習パイプラインが最低限動くか確認 |
+| `make test-all` | 上記3つを順番に実行 | CI/手動検証用 |
+| `make train-act` | ACTポリシーで本番学習 | batch_size=8, steps=100000 |
+| `make train-diffusion` | Diffusionポリシーで本番学習 | batch_size=8, steps=100000 |
+| `make check-dataset-version` | データセットの codebase_version を表示 | v3.0 かどうか確認 |
+| `make check-dataset-features` | データセットの全 features を表示 | 次元・dtype の確認 |
+
+### 直接実行する場合のコマンド例
+
+Makefileを使わず直接実行する場合:
+
 ```bash
-python train_realman.py \
+cd /workspace/qwen_vla_project
+
+# ACTポリシーで学習
+.venv/bin/python train_realman.py \
+    --dataset.repo_id=robocoin/Realman_RMC_AIDA_L_storage_block_basket \
+    --dataset.root=robocoin/RoboCOIN/Realman_RMC_AIDA_L_storage_block_basket \
     --policy.type=act \
-    --dataset.repo_id=your_org/robocoin_dataset \
     --policy.push_to_hub=false \
-    --num_workers=0
+    --num_workers=0 \
+    --batch_size=8 \
+    --steps=100000 \
+    --output_dir=outputs/act_realman
 ```
 
 ### 重要なオプション
 
 | オプション | 推奨値 | 理由 |
 |---|---|---|
-| `--policy.push_to_hub=false` | `false` | HuggingFaceへのモデル自動アップロードを無効化。ネットワーク不要 or 認証なし環境で必須 |
-| `--num_workers=0` | `0` | DataLoader のワーカープロセスを無効化。SHM（共有メモリ）不足エラーを回避するために必要 |
+| `--policy.push_to_hub=false` | `false` | HuggingFaceへのモデル自動アップロードを無効化。省略すると `repo_id` 未指定エラー |
+| `--num_workers=0` | `0` | DataLoader のワーカープロセスを無効化。SHM不足エラーを回避 |
+| `--policy.type=act` | 任意 | ポリシー種別。`act`, `diffusion` 等を指定 |
+| `--batch_size=N` | `8` | GPUメモリに応じて調整 |
+| `--steps=N` | `100000` | 学習ステップ数 |
+| `--output_dir=PATH` | 任意 | チェックポイント・ログの保存先 |
 
-`train_realman.py` はこれらをデフォルト注入するため、明示指定しなくても自動で適用される:
+---
 
-```python
-if not any(arg.startswith("--policy.push_to_hub") for arg in sys.argv[1:]):
-    sys.argv.append("--policy.push_to_hub=false")
-if not any(arg.startswith("--num_workers") for arg in sys.argv[1:]):
-    sys.argv.append("--num_workers=0")
-```
+## 4. 検証手順（実行済みテストコマンドと結果）
 
-### データセット features の確認方法
+以下は 2026-03-26 に実際に実行して検証したコマンドと結果です。
+
+### 4.1 Import テスト
 
 ```bash
-python3 -c "
+cd /workspace/qwen_vla_project
+
+# 単腕 Realman
+.venv/bin/python -c "
 import sys; sys.path.insert(0, 'lerobot/src')
-import json
-with open('robocoin/RoboCOIN/Realman_RMC_AIDA_L_storage_block_basket/meta/info.json') as f:
-    info = json.load(f)
-for k, v in info['features'].items():
-    print(f'{k}: dtype={v[\"dtype\"]}, shape={v[\"shape\"]}')
+from lerobot.robots.realman import RealmanFollowerConfig, RealmanFollower
+print('realman import OK')
 "
+# 結果: realman import OK
+
+# 双腕 BiRealman
+.venv/bin/python -c "
+import sys; sys.path.insert(0, 'lerobot/src')
+from lerobot.robots.bi_realman import BiRealmanFollowerConfig, BiRealmanFollower
+print('bi_realman import OK')
+"
+# 結果: bi_realman import OK
 ```
 
-期待される出力（RoboCOIN）:
+### 4.2 データセット読み込みテスト
+
+```bash
+.venv/bin/python -c "
+import sys; sys.path.insert(0, 'lerobot/src')
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+ds = LeRobotDataset(
+    repo_id='robocoin/Realman_RMC_AIDA_L_storage_block_basket',
+    root='robocoin/RoboCOIN/Realman_RMC_AIDA_L_storage_block_basket'
+)
+print('Dataset loaded:', len(ds), 'frames')
+print('Features:', list(ds.meta.info['features'].keys()))
+"
+# 結果:
+#   Dataset loaded: 19083 frames
+#   Features: ['observation.images.cam_head_rgb', 'observation.images.cam_left_wrist_rgb',
+#              'observation.images.cam_right_wrist_rgb', 'observation.state', 'action',
+#              'timestamp', 'frame_index', 'episode_index', 'index', 'task_index']
 ```
-observation.images.cam_head_rgb: dtype=video, shape=[480, 640, 3]
-observation.images.cam_left_wrist_rgb: dtype=video, shape=[480, 640, 3]
-observation.images.cam_right_wrist_rgb: dtype=video, shape=[480, 640, 3]
-observation.state: dtype=float32, shape=[28]
-action: dtype=float32, shape=[28]
-timestamp: dtype=float32, shape=[1]
-frame_index: dtype=int64, shape=[1]
-episode_index: dtype=int64, shape=[1]
-index: dtype=int64, shape=[1]
-task_index: dtype=int64, shape=[1]
+
+### 4.3 video_backend 自動検出テスト
+
+```bash
+.venv/bin/python -c "
+import sys; sys.path.insert(0, 'lerobot/src')
+from lerobot.configs.default import get_safe_default_codec
+print('Default codec:', get_safe_default_codec())
+"
+# 結果:
+#   WARNING: 'torchcodec' is not available in your platform, falling back to 'pyav'
+#   Default codec: pyav
+```
+
+### 4.4 lerobot_train 直接実行テスト（ラッパーなし）
+
+```bash
+PYTHONPATH=lerobot/src:$PYTHONPATH .venv/bin/python -m lerobot.scripts.lerobot_train \
+    --dataset.repo_id=robocoin/Realman_RMC_AIDA_L_storage_block_basket \
+    --dataset.root=robocoin/RoboCOIN/Realman_RMC_AIDA_L_storage_block_basket \
+    --dataset.video_backend=pyav \
+    --policy.type=act \
+    --policy.push_to_hub=false \
+    --num_workers=0 \
+    --batch_size=2 \
+    --steps=2 \
+    --output_dir=outputs/test_direct
+# 結果: FAIL
+#   AttributeError: module 'torchvision.io' has no attribute 'VideoReader'
+#   → video_backend=pyav でも内部で torchvision.io.VideoReader を要求するため動かない
+```
+
+### 4.5 train_realman.py ラッパー経由の学習テスト（smoke test）
+
+```bash
+.venv/bin/python train_realman.py \
+    --dataset.repo_id=robocoin/Realman_RMC_AIDA_L_storage_block_basket \
+    --dataset.root=robocoin/RoboCOIN/Realman_RMC_AIDA_L_storage_block_basket \
+    --policy.type=act \
+    --policy.push_to_hub=false \
+    --num_workers=0 \
+    --batch_size=2 \
+    --steps=2 \
+    --output_dir=outputs/test_smoke
+# 結果: PASS
+#   Training: 100%|██████████| 2/2 [00:07<00:00, 3.80s/step]
+#   INFO End of training
+```
+
+### 4.6 Makefile 経由のテスト
+
+```bash
+make test-import
+# 結果: realman import OK / bi_realman import OK
+
+make test-dataset
+# 結果: Dataset loaded: 19083 frames, Features: [10 features]
+
+make test-train
+# 結果: Training 2/2 完了, End of training
+
+make check-dataset-features
+# 結果:
+#   observation.images.cam_head_rgb: dtype=video, shape=[480, 640, 3]
+#   observation.images.cam_left_wrist_rgb: dtype=video, shape=[480, 640, 3]
+#   observation.images.cam_right_wrist_rgb: dtype=video, shape=[480, 640, 3]
+#   observation.state: dtype=float32, shape=[28]
+#   action: dtype=float32, shape=[28]
+#   timestamp: dtype=float32, shape=[1]
+#   frame_index: dtype=int64, shape=[1]
+#   episode_index: dtype=int64, shape=[1]
+#   index: dtype=int64, shape=[1]
+#   task_index: dtype=int64, shape=[1]
 ```
 
 ---
 
-## 4. トラブルシューティング
+## 5. 設計判断の記録
 
-### video decoding エラー（torchcodec非対応環境）
+### なぜ `--robot.type=realman` ではないのか
+
+LeRobot の `TrainPipelineConfig` には `robot` フィールドが**存在しない**。学習パイプラインはデータセットの `features`（`meta/info.json`）のみからポリシーの入出力次元を決定する。robot config が必要になるのはデプロイ（推論→実機制御）フェーズのみ。
+
+### なぜ monkey-patch ラッパーを維持するのか
+
+| アプローチ | 結果 | 備考 |
+|-----------|------|------|
+| `lerobot_train` 直接実行 + `--dataset.video_backend=pyav` | **FAIL** | `torchvision.io.VideoReader` 未搭載でクラッシュ |
+| `train_realman.py`（monkey-patch） | **PASS** | PyAV を直接使い VideoReader を完全バイパス |
+
+LeRobot の `video_backend="pyav"` は「PyAV を直接使う」のではなく「torchvision の pyav バックエンドを使う」意味であり、VideoReader が必須。この問題は LeRobot 本体の設計上の制約であるため、monkey-patch で外部から回避するのが現時点で唯一の解決策。
+
+**リスクと対策:**
+- monkey-patch は `video_utils.decode_video_frames` という関数名に依存しており、LeRobot のアップデートで壊れる可能性がある
+- LeRobot アップデート時は当該関数のシグネチャが変更されていないか確認すること
+- 長期的には LeRobot 本体に純粋な PyAV バックエンドを PR するのが望ましい
+
+### なぜ sys.argv 注入ではなく Makefile か
+
+| 方式 | メリット | デメリット |
+|------|---------|-----------|
+| sys.argv 注入（旧方式） | 実行コマンドが短い | コードがCLI引数を自己改変するハック |
+| Makefile（現方式） | デフォルト値がgit管理可能、透明性が高い | `make` コマンドの知識が必要 |
+
+Makefile の `COMMON_ARGS` でデフォルト値を一元管理することで、何のオプションが渡されているかが常に明示的になる。
+
+---
+
+## 6. トラブルシューティング
+
+### video decoding エラー（torchcodec / VideoReader 非対応環境）
 
 **症状:**
 ```
-ImportError: No module named 'torchcodec'
+AttributeError: module 'torchvision.io' has no attribute 'VideoReader'
 # または
-ImportError: No module named 'torchvision'
+ImportError: No module named 'torchcodec'
 ```
 
-**原因:** LeRobotのデフォルトのビデオデコードバックエンドが `torchcodec` または `torchvision.io.VideoReader` を要求するが、aarch64環境やGPU非搭載環境ではインストールできない。
+**原因:** LeRobot の video backend が `torchvision.io.VideoReader` を要求するが、環境に搭載されていない。`--dataset.video_backend=pyav` を指定しても、内部で VideoReader 経由のため解決しない。
 
-**対処:** `train_realman.py` を使用する。このスクリプトは起動時に `decode_video_frames` 関数をPyAVベースの実装に置き換える（monkey-patch）。直接 `lerobot_train.py` を呼ばず、必ず `train_realman.py` 経由で実行する。
-
+**対処:** 必ず `train_realman.py` 経由で実行する。
 ```bash
-# NG: 直接呼び出し（torchcodecが必要）
-python lerobot/src/lerobot/scripts/lerobot_train.py ...
+# NG: 直接呼び出し
+PYTHONPATH=lerobot/src python -m lerobot.scripts.lerobot_train ...
 
-# OK: monkey-patchラッパー経由
+# OK: monkey-patch ラッパー経由
 python train_realman.py ...
+
+# OK: Makefile 経由
+make train-act
 ```
 
 ### SHM不足エラー（DataLoader ワーカー関連）
@@ -252,41 +424,24 @@ python train_realman.py ...
 **症状:**
 ```
 RuntimeError: DataLoader worker (pid XXXXX) is killed by signal: Bus error
-# または
-OSError: [Errno 28] No space left on device (shared memory)
 ```
 
-**原因:** DataLoaderがマルチプロセスでデータを読み込む際、共有メモリ（`/dev/shm`）を消費する。コンテナ環境などではSHMサイズが制限されている（デフォルト64MB）。
+**原因:** `/dev/shm` のサイズ不足。コンテナ環境ではデフォルト64MB。
 
-**対処:** `--num_workers=0` を指定してシングルプロセスに切り替える。`train_realman.py` はデフォルトで自動付与するため、明示指定しなくても適用される。
+**対処:** `--num_workers=0` を指定。Makefile では `COMMON_ARGS` に含まれている。
 
 ```bash
-python train_realman.py ... --num_workers=0
-```
-
-SHMのサイズ確認:
-```bash
-df -h /dev/shm
+df -h /dev/shm  # SHM サイズ確認
 ```
 
 ### push_to_hub エラー
 
 **症状:**
 ```
-huggingface_hub.utils._errors.HfHubHTTPError: 401 Unauthorized
-# または
-ValueError: You must be logged in to push to the Hub
+ValueError: 'policy.repo_id' argument missing. Please specify it to push the model to the hub.
 ```
 
-**原因:** デフォルトではモデルのチェックポイントをHuggingFace Hubに自動アップロードしようとする。
-
-**対処:** `--policy.push_to_hub=false` を指定する（`train_realman.py` は自動付与）。
-
-HuggingFaceにログインして使う場合:
-```bash
-huggingface-cli login
-python train_realman.py ... --policy.push_to_hub=true
-```
+**対処:** `--policy.push_to_hub=false` を指定。Makefile では `COMMON_ARGS` に含まれている。
 
 ### robot_type が認識されない
 
@@ -295,9 +450,7 @@ python train_realman.py ... --policy.push_to_hub=true
 ValueError: Error creating robot with config ...
 ```
 
-**原因:** `robots/utils.py` の `make_robot_from_config()` に新しいロボットタイプの分岐が追加されていない。
-
-**対処:** `utils.py` に `elif config.type == "my_robot":` 分岐を追加する（セクション2の登録手順を参照）。
+**対処:** `lerobot/src/lerobot/robots/utils.py` の `make_robot_from_config()` に elif 分岐を追加する（セクション2の登録手順を参照）。
 
 ---
 

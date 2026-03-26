@@ -12,9 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-Training script for Realman robot with RoboCOIN dataset.
-Patches video decoding to use av library directly since torchvision.io.VideoReader
-and torchcodec are not available on this platform (aarch64, no GPU).
+Training wrapper for environments without torchvision.io.VideoReader.
+
+Why this wrapper is needed:
+    LeRobot's video_backend="pyav" still routes through torchvision.io.VideoReader
+    internally (video_utils.py L151-152). On platforms where VideoReader is not
+    available (e.g. aarch64, certain GPU-less builds), lerobot_train crashes with:
+        AttributeError: module 'torchvision.io' has no attribute 'VideoReader'
+
+    This script monkey-patches decode_video_frames to use PyAV directly,
+    bypassing VideoReader entirely.
+
+Usage:
+    See Makefile for standard training commands, or run directly:
+
+    python train_realman.py \\
+        --dataset.repo_id=robocoin/Realman_RMC_AIDA_L_storage_block_basket \\
+        --dataset.root=robocoin/RoboCOIN/Realman_RMC_AIDA_L_storage_block_basket \\
+        --policy.type=act \\
+        --policy.push_to_hub=false \\
+        --num_workers=0 \\
+        --batch_size=8 \\
+        --steps=100000 \\
+        --output_dir=outputs/act_realman
 """
 
 import sys
@@ -109,11 +129,4 @@ video_utils.decode_video_frames = decode_video_frames_av
 from lerobot.scripts.lerobot_train import train
 
 if __name__ == "__main__":
-    # Inject safe defaults before parsing arguments.
-    # These are appended only when not already specified by the user,
-    # so explicit CLI arguments always take precedence.
-    if not any(arg.startswith("--policy.push_to_hub") for arg in sys.argv[1:]):
-        sys.argv.append("--policy.push_to_hub=false")
-    if not any(arg.startswith("--num_workers") for arg in sys.argv[1:]):
-        sys.argv.append("--num_workers=0")
     train()
