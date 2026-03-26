@@ -367,6 +367,20 @@ ValueError: 'policy.repo_id' argument missing.
 
 → `--policy.push_to_hub=false` を指定。
 
+### egg-info 権限エラー（インストール時）
+
+```
+error: Cannot update time stamp of directory 'src/lerobot.egg-info'
+```
+
+→ 別ユーザー（root 等）で `uv pip install` した際に `lerobot/src/lerobot.egg-info/` が
+そのユーザー所有で作られている。削除して再実行:
+
+```bash
+rm -rf lerobot/src/lerobot.egg-info
+uv pip install -e lerobot/ --python .lerobot_venv/bin/python
+```
+
 ### video decoding エラー
 
 ```
