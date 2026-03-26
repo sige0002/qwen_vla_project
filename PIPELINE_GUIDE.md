@@ -30,6 +30,30 @@ uv pip install -e lerobot/ --python .lerobot_venv/bin/python
 aarch64 (Jetson) では `torchcodec` が自動除外され、`pyav` バックエンドにフォールバックする。
 正しくインストールすれば monkey-patch なしで `lerobot-train` が動作する。
 
+### PyTorch CUDA 版の注意（DGX Spark 等）
+
+`uv pip install` はデフォルトで PyPI の CPU 版 PyTorch をインストールしてしまう。
+CUDA 版を確実に入れるため、`lerobot/pyproject.toml` に以下を追記済み:
+
+```toml
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }
+torchvision = { index = "pytorch-cu130" }
+```
+
+別の CUDA バージョンの場合は `cu130` を変更する（例: `cu124`, `cu126`）。
+
+確認方法:
+```bash
+.lerobot_venv/bin/python -c "import torch; print(torch.cuda.is_available(), torch.version.cuda)"
+# → True 13.0
+```
+
 ### 環境確認
 
 ```bash
@@ -367,15 +391,26 @@ ValueError: 'policy.repo_id' argument missing.
 
 → `--policy.push_to_hub=false` を指定。
 
-### egg-info 権限エラー（インストール時）
+### インストール時の Permission denied エラー
+
+以下のいずれかのエラーが出る場合:
 
 ```
 error: Cannot update time stamp of directory 'src/lerobot.egg-info'
 ```
+```
+error: failed to remove file `.lerobot_venv/lib/.../bin/lerobot-calibrate`: Permission denied
+```
+```
+rm: cannot remove 'lerobot/src/lerobot.egg-info/PKG-INFO': Permission denied
+```
 
-→ 別ユーザー（root 等）で `uv pip install` した際に `.lerobot_venv/` や
-`lerobot/src/lerobot.egg-info/` がそのユーザー所有で作られている。
-venv ごと削除して作り直す:
+→ **原因**: 別ユーザー（root、コンテナ内の別ユーザー等）で `uv venv` や `uv pip install`
+を実行した際に `.lerobot_venv/` と `lerobot/src/lerobot.egg-info/` がそのユーザー所有で
+作られている。egg-info だけ消しても venv 内の `bin/lerobot-*` スクリプトも同じ所有者のため
+再インストールも失敗する。
+
+→ **対処**: venv ごと `sudo` で削除して、自分のユーザーで作り直す:
 
 ```bash
 sudo rm -rf .lerobot_venv lerobot/src/lerobot.egg-info
