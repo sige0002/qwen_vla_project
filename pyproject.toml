@@ -3,8 +3,24 @@ name = "qwen"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "huggingface_hub",
+    "huggingface-hub",
     "torch",
     "transformers",
     "accelerate",
+    "jsonlines>=4.0.0",
+    "pandas>=3.0.1",
+    "pyarrow>=23.0.1",
+    "tqdm>=4.67.3",
+    "datasets>=4.8.4",
+    "pillow>=12.1.1",
+    "torchvision>=0.26.0",
+    "av>=17.0.0",
+    "termcolor>=3.3.0",
+    "draccus>=0.11.5",
+    "pyserial>=3.5",
+    "deepdiff>=8.6.2",
+    "einops>=0.8.2",
+    "gymnasium>=1.2.3",
+    "imageio>=2.37.3",
+    "diffusers>=0.37.1",
 ]
