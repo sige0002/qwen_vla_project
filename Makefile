@@ -23,7 +23,7 @@ COMMON_ARGS := \
 	--policy.push_to_hub=false \
 	--num_workers=0
 
-.PHONY: help setup test-import test-dataset test-train test-all \
+.PHONY: help setup activate test-import test-dataset test-train test-all \
 	train-act train-diffusion convert-v21-to-v30 \
 	check-info check-dataset-features check-dataset-version
 
@@ -32,6 +32,9 @@ help: ## Show this help
 		awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
 
 # === Setup ===
+
+activate: ## Show command to activate lerobot venv
+	@echo 'Run: source .lerobot_venv/bin/activate'
 
 setup: ## Create lerobot venv and install dependencies
 	uv venv .lerobot_venv --python 3.12
@@ -85,7 +88,7 @@ convert-v21-to-v30: ## Convert old v2.1 dataset to v3.0 (with parquet fix)
 		--repo-id=$(DATASET_OLD_REPO) \
 		--root=$(DATASET_OLD_ROOT) \
 		--push-to-hub=false
-	$(PYTHON) fix_parquet_list_scalars.py --root=$(DATASET_OLD_ROOT)
+	$(PYTHON) scripts/fix_parquet_list_scalars.py --root=$(DATASET_OLD_ROOT)
 
 check-dataset-version: ## Check dataset codebase version
 	@cat $(DATASET_ROOT)/meta/info.json | python3 -m json.tool | grep codebase_version

@@ -4,12 +4,6 @@
 # Python virtual environment
 .venv/
 .lerobot_venv/
-bin/
-lib/
-lib64
-pyvenv.cfg
-CACHEDIR.TAG
-.lock
 
 # Python
 __pycache__/
